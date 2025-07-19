@@ -1,2 +1,2 @@
-# wifi_activity_recognition
+# 3D object recognition
 NN &amp; DL final project
