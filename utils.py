@@ -59,7 +59,8 @@ class ModelNetDataset(Dataset):
             "vertices":    verts,
             "faces":       faces,
             "label":       label,
-            "label_class": label_class
+            "label_class": label_class,
+            "mesh_path": mesh_path
         }
 
         if self.transform:
