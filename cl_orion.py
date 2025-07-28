@@ -27,9 +27,13 @@ class Encoder(nn.Module):
         self.bn2 = nn.BatchNorm3d(64)
         self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
         self.leaky_relu = nn.LeakyReLU(0.1, inplace=True)
+        self.relu = nn.ReLU(inplace=True)
+        self.linear1 = nn.Linear(8000, 1024)
+        self.linear2 = nn.Linear(1024, 128)
 
         self.dropout1 = nn.Dropout(0.2)
         self.dropout2 = nn.Dropout(0.3)
+        self.dropout3 = nn.Dropout(0.4)
 
 
     def forward(self, x: torch.Tensor):
@@ -43,7 +47,9 @@ class Encoder(nn.Module):
         x = self.leaky_relu(self.bn4(self.dropout4(self.conv4(x))))"""
         x = self.pool(x)
 
-        representation_vec = x.view(x.size(0), -1)      # flatten
+        flat_x = x.view(x.size(0), -1)      # flatten
+        flat_x = self.relu(self.dropout3(self.linear1(flat_x)))
+        representation_vec = self.linear2(flat_x)
 
         return representation_vec
 
@@ -61,7 +67,7 @@ class HeadContrastive(nn.Module):
       - Branch2: FC(128 → num_orientations)   # orientation label
     where p = floor((floor((grid_size - 5)/2) + 1 - 3 + 1) / 2)
     """
-    def __init__(self, input_dim=2048, hidden_dim=2048, output_dim=128):
+    def __init__(self, input_dim=128, hidden_dim=1024, output_dim=128):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -71,6 +77,35 @@ class HeadContrastive(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+
+class HeadClassification(nn.Module):
+    """
+    Orientation‑boosted Voxel Net (ORION) for 3D object recognition.
+    
+    Architecture (VoxNet backbone):
+      - Conv3d(1→32, kernel=5, stride=2) + LeakyReLU(0.1)
+      - Conv3d(32→32, kernel=3, stride=1) + LeakyReLU(0.1)
+      - MaxPool3d(kernel=2)
+      - Flatten
+      - FC(32 * p^3 → 128) + ReLU
+      - Branch1: FC(128 → num_classes)        # object category
+      - Branch2: FC(128 → num_orientations)   # orientation label
+    where p = floor((floor((grid_size - 5)/2) + 1 - 3 + 1) / 2)
+    """
+    def __init__(self, input_dim=128, hidden_dim=128, output_dim=10):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.Dropout(0.3),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, output_dim),
+            nn.Dropout(0.2),
+            nn.LogSoftmax(dim=1)
+        )
+
+    def forward(self, x):
+        return self.net(x)    
 
 class NTXentLoss():
     def __init__(self, temperature=0.5):
@@ -94,15 +129,16 @@ class NTXentLoss():
 
         # 4) Mask out self‑similarities
         mask = torch.eye(2*N, device=z.device, dtype=torch.bool)
-        sim.masked_fill_(mask, 0)
+        sim.masked_fill_(mask, -9e15)
 
         # 5) Positive‐pair similarities:
         #    for i in [0..N), the positive of i is i+N; and vice‑versa
         pos_idx = torch.arange(N, device=z.device)
-        pos_sim = sim[pos_idx, pos_idx + N]                       # [N]
+        pos_sim = torch.cat([sim[pos_idx, pos_idx + N],
+                             sim[pos_idx + N, pos_idx]], dim=0)                       # [2N]
 
         # 6) NT‐Xent loss
         exp_sim = torch.exp(sim)           # [2N,2N]
         denom   = exp_sim.sum(dim=1)       # sum over all negatives
-        loss = -torch.log(torch.exp(pos_sim) / denom[:N])
+        loss = -torch.log(torch.exp(pos_sim) / denom)
         return loss.mean()

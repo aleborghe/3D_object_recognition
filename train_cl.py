@@ -2,7 +2,10 @@ from utils import VoxelDataset
 from cl_orion import Encoder
 from cl_orion import HeadContrastive
 from cl_orion import NTXentLoss
-from utils import RandomRotateZ
+from utils import RandomRotate
+from utils import RandomCropResize3D
+from torchvision.transforms import Compose
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
@@ -14,7 +17,7 @@ from tqdm import tqdm
 import numpy as np
 
 
-def finish_training(train_loss_log, test_loss_log, best_enc_state, best_head_state, params_dir, best_accuracy):
+def finish_training(train_loss_log, test_loss_log, best_enc_state, best_head_state, params_dir, best_loss):
     # Plot losses
     plt.figure(figsize=(12, 8))
     plt.semilogy(train_loss_log, label='Train loss')
@@ -26,6 +29,7 @@ def finish_training(train_loss_log, test_loss_log, best_enc_state, best_head_sta
 
     plt.tight_layout()
     plt.savefig(params_dir + 'loss_overtime.png', dpi=300)
+    open(params_dir + str(best_loss) +'.txt', 'w')
 
     ### Save the network state
     # The state dictionary includes all the parameters of the network
@@ -34,7 +38,7 @@ def finish_training(train_loss_log, test_loss_log, best_enc_state, best_head_sta
     torch.save(best_head_state, params_dir + 'head_parameters.torch')
     
     print("Parameters saved at " + params_dir + 'net_parameters.torch')
-    print(f"Best validation accuracy: {best_accuracy}")
+    print(f"Best validation accuracy: {best_loss}")
     sys.exit()
 
 
@@ -44,17 +48,18 @@ if __name__ =="__main__":
     # Parameters
     RNG_seed = 1
     ##############Change these
-    params_dir = '../ModelNet10/'
+    params_dir = 'contrastive/'
     # Enable cuDNN to select the fastest convolution algorithms for your hardware
     torch.backends.cudnn.benchmark = True
 
     params = {
-        'num_epochs': 1501,
-        'learning_rate': 1e-3,
-        'batch_size': 200,
-        'optimizer': torch.optim.Adam,
+        'num_epochs': 3001,
+        'learning_rate': 1e-4,
+        'batch_size': 800,
+        'optimizer': torch.optim.AdamW,
         'grid_size': 28,
         'num_orientations': 4,
+        'temperature': 0.07,
         }
     print(f"Model parameters: {params}")
     num_epochs = params['num_epochs']
@@ -64,15 +69,17 @@ if __name__ =="__main__":
     print(torch.cuda.get_device_name() if torch.cuda.is_available() else "No CUDA device available")
     num_print = 10
     # build a single transform pipeline:
-    rotation = RandomRotateZ(num_orientations=4, augmentation=True)
+    crop = RandomCropResize3D(21, augmentation=True)
+    rotation = RandomRotate(num_orientations=params['num_orientations'], augmentation=True)
+    transform = Compose([crop, rotation])
 
 
     # Create train & test sets, sharing the same class→idx map:
-    train_ds = VoxelDataset(csv_path, data_root, split="train", transform=rotation)
+    train_ds = VoxelDataset(csv_path, data_root, split="train", transform=transform)
     print(f"Dataset length: {len(train_ds)}")
     test_ds  = VoxelDataset(csv_path, data_root,
                             split="test",
-                            class_to_idx=train_ds.class_to_idx, transform=rotation)
+                            class_to_idx=train_ds.class_to_idx, transform=transform)
     
     num_classes = len(train_ds.class_to_idx)
     print(f"Found {num_classes} classes: {train_ds.class_to_idx}")
@@ -80,17 +87,18 @@ if __name__ =="__main__":
                         num_workers=os.cpu_count(),        # spawn 3 worker processes
                         pin_memory=True,      # helps when transferring to GPU
                         prefetch_factor=4)     # how many batches each worker preloads)
-    test_loader = DataLoader(test_ds, batch_size=len(test_ds), shuffle=False, num_workers=0)     # how many batches each worker preloads)
+    test_loader = DataLoader(test_ds, batch_size=train_batch_size, shuffle=False, num_workers=0)     # how many batches each worker preloads)
     # Define the loss function
     encoder = Encoder()
     encoder.to(device)
-    transform_head = HeadContrastive(input_dim=8000)
+    transform_head = HeadContrastive(input_dim=128)
     transform_head.to(device)
     # Define the optimizer
-    optimizer_enc = params['optimizer'](encoder.parameters(), lr=params['learning_rate'])
-    optimizer_head = params['optimizer'](transform_head.parameters(), lr=params['learning_rate'])
+    optimizer = params['optimizer'](list(encoder.parameters())+list(transform_head.parameters()), lr=params['learning_rate'])
+    scheduler  = CosineAnnealingLR(optimizer,  T_max=params['num_epochs'],
+                                   eta_min=params['learning_rate'] * 1e-3)
 
-    loss_fn = NTXentLoss(0.5)
+    loss_fn = NTXentLoss(params['temperature'])
 
     file_name = params_dir + 'params.txt'
     with open(file_name, 'w') as f:
@@ -105,8 +113,7 @@ if __name__ =="__main__":
     test_loss_log = []
     start_time = time()
 
-    patience = 200  # Number of epochs to wait for improvement
-    lr_reduction_milestone = 75
+    patience = 1000  # Number of epochs to wait for improvement
     min_val_loss = 20  # Min loss after which early stopping occurs
     best_loss = float('inf')
     epochs_no_improve = 0
@@ -121,15 +128,16 @@ if __name__ =="__main__":
             transform_head.train()
             for sample_batched in tqdm(train_loader,desc=f"Epoch {epoch_num+1}/{num_epochs} - train", leave=False):
                 # Move data to device
-                query_voxels = sample_batched['voxel_rotated1'].unsqueeze(1).to(device)     # shape (B,1,28,28,28)
+                query_voxels = sample_batched['voxel1'].unsqueeze(1).to(device)     # shape (B,1,28,28,28)
                 
-                pos_voxels = sample_batched['voxel_rotated2'].unsqueeze(1).to(device)
+                pos_voxels = sample_batched['voxel2'].unsqueeze(1).to(device)
 
                 query_representations = transform_head(encoder(query_voxels))
                 pos_representations = transform_head(encoder(pos_voxels))
                 loss = loss_fn(query_representations, pos_representations)
                 encoder.zero_grad()
                 transform_head.zero_grad()
+                optimizer.zero_grad()
                 
                 ###########################################
 
@@ -137,8 +145,8 @@ if __name__ =="__main__":
                 loss.backward()
 
                 # Update the weights
-                optimizer_enc.step()
-                optimizer_head.step()
+                optimizer.step()
+                
                 ###########################################
 
                 # Save train loss for this batch
@@ -155,13 +163,14 @@ if __name__ =="__main__":
             accuracy = []
             encoder.eval()  # Evaluation mode (e.g. disable dropout, batchnorm,...)
             transform_head.eval()
+            scheduler.step()
             with torch.no_grad():  # Disable gradient tracking
                 for sample_batched in test_loader:
                     # Move data to device
                     
-                    query_voxels = sample_batched['voxel_rotated1'].unsqueeze(1).to(device)     # shape (B,1,28,28,28)
+                    query_voxels = sample_batched['voxel1'].unsqueeze(1).to(device)     # shape (B,1,28,28,28)
                 
-                    pos_voxels = sample_batched['voxel_rotated2'].unsqueeze(1).to(device)
+                    pos_voxels = sample_batched['voxel2'].unsqueeze(1).to(device)
 
                     query_representations = transform_head(encoder(query_voxels))
                     pos_representations = transform_head(encoder(pos_voxels))
@@ -184,12 +193,7 @@ if __name__ =="__main__":
                     best_head_state = transform_head.state_dict()
                 else:
                     epochs_no_improve += 1
-                    if epochs_no_improve == lr_reduction_milestone:
-                        print("Reducing learning rate by 10x")
-                        for pg in optimizer_enc.param_groups:
-                            pg['lr'] *= 0.1
-                        for pg in optimizer_head.param_groups:
-                            pg['lr'] *= 0.1
+
                     if epochs_no_improve >= patience:
                         print(f"Early stopping at epoch {epoch_num}. Best validation accuracy: {accuracy}")
                         break

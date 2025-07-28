@@ -1,17 +1,38 @@
-from cl_orion import NTXentLoss
 import torch
+import numpy as np
+from cl_orion import Encoder, HeadClassification
+from utils import VoxelDataset
 
-t = 1
+csv_path  = "../ModelNet10/new_metadata_modelnet10.csv"  # or wherever you put it
+data_root = "../ModelNet10"
+encoder_path = "36_contrastive/encoder_parameters.torch"
+head_path = "88_after_cl/net_parameters.torch"
+train_ds = VoxelDataset(csv_path, data_root, split="train", transform=None)
+test_ds = VoxelDataset(csv_path, data_root, split="train", transform=None)
 
-z_q = torch.tensor([[4, 2, 3], [4, 0, 6]], dtype = torch.float32, requires_grad=True)
-z_p = torch.tensor([[7, 2, 9], [10, 11, 12]], dtype = torch.float32, requires_grad=True)
+device = torch.device("cuda")
 
-loss = NTXentLoss(temperature=t)
-l = loss(z_q, z_p)
-print(l)
-l.backward()
-print(z_q.grad)
-i = torch.arange(2)
-a = torch.tensor([[1, 2, 3, 4],[5,6,7,8],[9,10,11,12],[13,14,15,16]])
-b = a[i,   i + 2]   # sim(q_i,  q⁺_i)
-print(b)
+encoder = Encoder()
+encoder.to(device)
+encoder.load_state_dict(torch.load(encoder_path))
+encoder.eval()
+transform_head = HeadClassification(input_dim=128)
+transform_head.to(device)
+transform_head.load_state_dict(torch.load(head_path))
+transform_head.eval()
+
+len_train = len(train_ds)
+len_test = len(test_ds)
+
+train_accuracy = []
+for i in range(10):
+	voxel = train_ds[i]['voxel'].unsqueeze(0).unsqueeze(0).to(device)
+	label = torch.tensor(train_ds[i]['label']).to(device)
+	pred = transform_head(encoder(voxel))
+	# Create a Categorical distribution using log-probabilities
+	dist = torch.distributions.Categorical(logits=pred)
+
+	# Sample one value (an integer in [0, 9])
+	sample = dist.sample()
+	print(label)
+	print(sample)

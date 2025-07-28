@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import torch
 import numpy as np
+from scipy.spatial.transform import Rotation as rot
 from torch.utils.data import Dataset
 import torch.nn.functional as F
 import trimesh
@@ -113,14 +114,15 @@ class VoxelDataset(Dataset):
         voxel_sample = torch.load(voxel_path)
 
         label_idx = self.class_to_idx[row["class"]]
-        label_logit = torch.zeros(self.num_classes)
-        label_logit[label_idx] = 1.0  # one-hot encoding
+        label_onehot = torch.zeros(self.num_classes)
+        label_onehot[label_idx] = 1.0  # one-hot encoding
         label_class = row["class"]
 
         sample = {
             "voxel":       voxel_sample,  # (G, G, G) occupancy grid
-            "label":       label_logit,
-            "label_class": label_class
+            "label_onehot": label_onehot,
+            "label_class": label_class,
+            "label": label_idx
         }
 
         if self.transform:
@@ -128,7 +130,7 @@ class VoxelDataset(Dataset):
 
         return sample
 
-class RandomRotateZ:
+class RandomRotate:
     """
     Rotate a binary occupancy grid by angle_degrees around the given axis.
     voxels: (D,H,W) tensor of 0/1 (uint8 or float)
@@ -143,6 +145,12 @@ class RandomRotateZ:
         self.augmentation = augmentation
 
     def __call__(self, sample):
+        if self.augmentation:
+            return self.augmented_call(sample)
+        else:
+            return self.normal_call(sample)
+
+    def normal_call(self, sample):
         # ensure float for grid_sample, add N,C dims
         grid = sample['voxel'][None, None]      # → (1,1,D,H,W)
         
@@ -166,36 +174,72 @@ class RandomRotateZ:
 
         # remove batch/channels and cast back to binary
         new_grid = (x_rot[0,0] > 0.5).to(grid.dtype)
-        if self.augmentation:
-            sample['voxel_rotated1'] = new_grid
-            # pick a random orientation bin
-            orient_idx2 = random.randrange(self.K)
-            if orient_idx2 == orient_idx:
-                orient_idx2 = random.randrange(self.K)
-            angle = torch.tensor(self.angles[orient_idx2], dtype=grid.dtype, device=grid.device)
-            cos, sin = torch.cos(angle), torch.sin(angle)
-            R = torch.tensor([
-                    [ 1, 0,   0,    0],
-                    [ 0, cos, -sin, 0],
-                    [ 0, sin, cos,  0],
-                ], dtype=grid.dtype, device=grid.device)
-            theta = R[None]  # (1,3,4)
-            # create normalized grid & sample with nearest‐neighbour
-            x = F.affine_grid(theta, grid.shape, align_corners=False)   # (1,D,H,W,3)
-            x_rot = F.grid_sample(grid, x,
-                                mode='nearest',
-                                padding_mode='zeros',
-                                align_corners=False)
-            # remove batch/channels and cast back to binary
-            new_grid = (x_rot[0,0] > 0.5).to(grid.dtype)
-            sample['voxel_rotated2'] = new_grid
-        else:
-            # write back rotated verts/faces
-            sample['voxel'] = new_grid
+        # write back rotated verts/faces
+        sample['voxel'] = new_grid
         orientation = torch.zeros(self.num_outputs)
         idx_at_one = self.K*4 + orient_idx
         orientation[idx_at_one] = 1.0
         sample['orientation']   = orientation
+        return sample
+
+    def augmented_call(self, sample):
+        # ensure float for grid_sample, add N,C dims
+        grid = sample['voxel1'][None, None]      # → (1,1,D,H,W)
+        
+        # pick a random orientation bin
+        orient_idx = random.randrange(self.K)
+        angle      = torch.tensor(self.angles[orient_idx], dtype=grid.dtype, device=grid.device)
+        axis = np.random.normal(size=3)
+        axis = axis/np.linalg.norm(axis) if np.linalg.norm(axis) != 0 else axis
+        rot_vec = angle*axis
+        R = np.hstack((rot.from_rotvec(rot_vec).as_matrix(), np.zeros((3,1))))
+        R = torch.tensor(R, dtype=grid.dtype, device=grid.device)
+        theta = R[None]  # (1,3,4)
+        # create normalized grid & sample with nearest‐neighbour
+        x = F.affine_grid(theta, grid.shape, align_corners=False)   # (1,D,H,W,3)
+        x_rot = F.grid_sample(grid, x,
+                            mode='nearest',
+                            padding_mode='zeros',
+                            align_corners=False)
+        
+
+        # remove batch/channels and cast back to binary
+        new_grid = (x_rot[0,0] > 0.5).to(grid.dtype)
+        # write back rotated verts/faces
+        sample['voxel1'] = new_grid
+        orientation = torch.zeros(self.num_outputs)
+        idx_at_one = self.K*4 + orient_idx
+        orientation[idx_at_one] = 1.0
+        sample['orientation1']   = orientation
+        # ensure float for grid_sample, add N,C dims
+        grid = sample['voxel2'][None, None]      # → (1,1,D,H,W)
+        
+        # pick a random orientation bin
+        orient_idx = random.randrange(self.K)
+        angle      = torch.tensor(self.angles[orient_idx], dtype=grid.dtype, device=grid.device)
+        rot_axis = random.randrange(3)
+        axis = np.zeros(3)
+        axis[rot_axis] = 1
+        rot_vec = angle*axis
+        R = np.hstack((rot.from_rotvec(rot_vec).as_matrix(), np.zeros((3,1))))
+        R = torch.tensor(R, dtype=grid.dtype, device=grid.device)
+        theta = R[None]  # (1,3,4)
+        # create normalized grid & sample with nearest‐neighbour
+        x = F.affine_grid(theta, grid.shape, align_corners=False)   # (1,D,H,W,3)
+        x_rot = F.grid_sample(grid, x,
+                            mode='nearest',
+                            padding_mode='zeros',
+                            align_corners=False)
+        
+
+        # remove batch/channels and cast back to binary
+        new_grid = (x_rot[0,0] > 0.5).to(grid.dtype)
+        # write back rotated verts/faces
+        sample['voxel2'] = new_grid
+        orientation = torch.zeros(self.num_outputs)
+        idx_at_one = self.K*4 + orient_idx
+        orientation[idx_at_one] = 1.0
+        sample['orientation2']   = orientation
         return sample
 
 class RandomCropResize3D:
@@ -204,12 +248,20 @@ class RandomCropResize3D:
     extract a random (N x N x N) crop and resize it back to (D,H,W).
     Replaces sample['voxel'] with the cropped+resized grid.
     """
-    def __init__(self, crop_size: int, output_size: int = 28):
+    def __init__(self, crop_size: int, output_size: int = 28, augmentation = False, max_tries=5):
         self.crop_size   = crop_size
         self.output_size = output_size
+        self.augmentation = augmentation
+        self.max_tries = max_tries
         assert crop_size <= output_size, "crop_size must be <= output_size"
-        
+    
     def __call__(self, sample):
+        if self.augmentation:
+            return self.augmented_call(sample)
+        else:
+            return self.normal_call(sample)
+
+    def normal_call(self, sample):
         # original grid: [D,H,W]
         grid = sample['voxel']
         D, H, W = grid.shape
@@ -217,14 +269,7 @@ class RandomCropResize3D:
             f"Expected voxel of shape {(self.output_size,)*3}, got {grid.shape}"
         
         # pick random corner
-        z0 = random.randint(0, D - self.crop_size)
-        y0 = random.randint(0, H - self.crop_size)
-        x0 = random.randint(0, W - self.crop_size)
-        
-        # crop
-        crop = grid[z0:z0+self.crop_size,
-                    y0:y0+self.crop_size,
-                    x0:x0+self.crop_size]      # [N,N,N]
+        crop = self.sample_crop(grid)
         
         # to float and add batch/channel dims for interpolate
         vol = crop.unsqueeze(0).unsqueeze(0).float()  # [1,1,N,N,N]
@@ -239,9 +284,74 @@ class RandomCropResize3D:
         
         # squeeze back and cast to original dtype (0/1 occupancy)
         new_grid = (vol_resized[0,0] > 0.5).to(grid.dtype)  # [28,28,28]
-        
         sample['voxel'] = new_grid
         return sample
+    
+    def augmented_call(self, sample):
+        # original grid: [D,H,W]
+        grid = sample['voxel']
+        
+        # pick random corner
+        crop = self.sample_crop(grid)
+        
+        # to float and add batch/channel dims for interpolate
+        vol = crop.unsqueeze(0).unsqueeze(0).float()  # [1,1,N,N,N]
+        
+        # resize back to [1,1,28,28,28]
+        vol_resized = F.interpolate(
+            vol,
+            size=(self.output_size,)*3,
+            mode='nearest',
+            align_corners=None
+        )
+        
+        # squeeze back and cast to original dtype (0/1 occupancy)
+        new_grid = (vol_resized[0,0] > 0.5).to(grid.dtype)  # [28,28,28]
+        sample['voxel1'] = new_grid
+        """# pick random corner
+        crop = self.sample_crop(grid)
+        
+        # to float and add batch/channel dims for interpolate
+        vol = crop.unsqueeze(0).unsqueeze(0).float()  # [1,1,N,N,N]
+        
+        # resize back to [1,1,28,28,28]
+        vol_resized = F.interpolate(
+            vol,
+            size=(self.output_size,)*3,
+            mode='nearest',
+            align_corners=None
+        )
+        
+        # squeeze back and cast to original dtype (0/1 occupancy)
+        new_grid = (vol_resized[0,0] > 0.5).to(grid.dtype)  # [28,28,28]"""
+        sample['voxel2'] = new_grid
+        return sample
+    
+    def sample_crop(self, grid):
+        D, H, W = grid.shape
+        # if volume is completely empty, bail immediately
+        if grid.sum() == 0:
+            z0 = random.randint(0, D - self.crop_size)
+            y0 = random.randint(0, H - self.crop_size)
+            x0 = random.randint(0, W - self.crop_size)
+            crop = grid[z0:z0+self.crop_size,
+                        y0:y0+self.crop_size,
+                        x0:x0+self.crop_size]
+            return crop
+        
+        # otherwise rejection‐sample until we see a 1
+        for _ in range(self.max_tries):
+            z0 = random.randint(0, D - self.crop_size)
+            y0 = random.randint(0, H - self.crop_size)
+            x0 = random.randint(0, W - self.crop_size)
+            crop = grid[z0:z0+self.crop_size,
+                        y0:y0+self.crop_size,
+                        x0:x0+self.crop_size]
+            if crop.any():    # at least one 1 in the patch
+                return crop
+        
+        # fallback: if we hit max_tries without success, just return the last one
+        return crop
 
 class ToVoxelGrid:
     """

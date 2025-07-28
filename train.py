@@ -1,6 +1,6 @@
 from utils import VoxelDataset
 from utils import ORIONNet
-from utils import RandomRotateZ
+from utils import RandomRotate
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
@@ -60,7 +60,7 @@ if __name__ =="__main__":
     print(torch.cuda.get_device_name() if torch.cuda.is_available() else "No CUDA device available")
     num_print = 10
     # build a single transform pipeline:
-    rotation = RandomRotateZ(num_orientations=4)
+    rotation = RandomRotate(num_orientations=4)
 
 
     # Create train & test sets, sharing the same class→idx map:
