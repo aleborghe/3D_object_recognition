@@ -39,7 +39,7 @@ def finish_training(train_loss_log, test_loss_log, best_model_state, net, params
 if __name__ =="__main__":
     csv_path  = "../ModelNet10/new_metadata_modelnet10.csv"  # or wherever you put it
     data_root = "../ModelNet10"        # root folder for the folders in object_path
-    encoder_path = "36_contrastive/encoder_parameters.torch"
+    encoder_path = "84_contrastive/encoder_parameters.torch"
     # Parameters
     RNG_seed = 1
     ##############Change these
@@ -88,7 +88,7 @@ if __name__ =="__main__":
     optimizer = params['optimizer'](transform_head.parameters(), lr=params['learning_rate'])
     scheduler  = CosineAnnealingLR(optimizer,  T_max=params['num_epochs'],
                                    eta_min=params['learning_rate'] * 1e-3)
-    loss_fn = torch.nn.NLLLoss()
+    loss_fn = torch.nn.functional.cross_entropy
     file_name = params_dir + 'params.txt'
     with open(file_name, 'w') as f:
         for key, value in params.items():

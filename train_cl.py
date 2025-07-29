@@ -58,7 +58,7 @@ if __name__ =="__main__":
         'batch_size': 800,
         'optimizer': torch.optim.AdamW,
         'grid_size': 28,
-        'num_orientations': 4,
+        'num_orientations': 8,
         'temperature': 0.07,
         }
     print(f"Model parameters: {params}")

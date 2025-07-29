@@ -28,8 +28,8 @@ class Encoder(nn.Module):
         self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
         self.leaky_relu = nn.LeakyReLU(0.1, inplace=True)
         self.relu = nn.ReLU(inplace=True)
-        self.linear1 = nn.Linear(8000, 1024)
-        self.linear2 = nn.Linear(1024, 128)
+        self.linear1 = nn.Linear(8000, 128)
+        #self.linear2 = nn.Linear(1024, 128)
 
         self.dropout1 = nn.Dropout(0.2)
         self.dropout2 = nn.Dropout(0.3)
@@ -48,10 +48,10 @@ class Encoder(nn.Module):
         x = self.pool(x)
 
         flat_x = x.view(x.size(0), -1)      # flatten
-        flat_x = self.relu(self.dropout3(self.linear1(flat_x)))
-        representation_vec = self.linear2(flat_x)
+        flat_x = self.leaky_relu(self.dropout3(self.linear1(flat_x)))
+        #representation_vec = self.leaky_relu(self.linear2(flat_x))
 
-        return representation_vec
+        return flat_x
 
 class HeadContrastive(nn.Module):
     """
@@ -100,8 +100,7 @@ class HeadClassification(nn.Module):
             nn.Dropout(0.3),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, output_dim),
-            nn.Dropout(0.2),
-            nn.LogSoftmax(dim=1)
+            nn.Dropout(0.2)
         )
 
     def forward(self, x):

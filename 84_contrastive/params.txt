@@ -1,7 +1,7 @@
 num_epochs=3001
-learning_rate=0.001
-batch_size=300
+learning_rate=0.0001
+batch_size=800
 optimizer=<class 'torch.optim.adamw.AdamW'>
 grid_size=28
-
-0.80 accuracy after only 150 epochs
+num_orientations=8
+temperature=0.07

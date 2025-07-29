@@ -100,7 +100,7 @@ if __name__ =="__main__":
     test_loss_log = []
     start_time = time()
 
-    patience = 200  # Number of epochs to wait for improvement
+    patience =150  # Number of epochs to wait for improvement
     lr_reduction_milestone = 75
     min_val_loss = 20  # Min loss after which early stopping occurs
     best_accuracy = 0
@@ -154,7 +154,7 @@ if __name__ =="__main__":
                     loss = 0.5*F.cross_entropy(cls_logits, cls_gt) \
                         + 0.5*F.cross_entropy(ori_logits, ori_gt)
                     ###########################################
-                    accuracy_batch = (cls_logits.argmax(dim=1)  == cls_gt.argmax(dim=1)).float().mean().item()
+                    accuracy_batch = (cls_logits.argmax(dim=1)  == cls_gt).float().mean().item()
                     # Save val loss for this batch (scaled)
                     loss_batch = loss.detach().cpu().numpy()
                     test_loss.append(loss_batch)

@@ -449,7 +449,6 @@ class ORIONNet(nn.Module):
         # activations
         self.leaky_relu = nn.LeakyReLU(0.1, inplace=True)
         self.relu       = nn.ReLU(inplace=True)
-        self.softMax  = nn.Softmax(dim=1)
 
     def forward(self, x: torch.Tensor):
         """
@@ -465,8 +464,8 @@ class ORIONNet(nn.Module):
         x = x.view(x.size(0), -1)      # flatten
         x = self.relu(self.dropout3(self.fc1(x)))
 
-        class_logits  = self.softMax(self.fc_class(x))
-        orient_logits = self.softMax(self.fc_orient(x))
+        class_logits  = self.fc_class(x)
+        orient_logits = self.fc_orient(x)
         return class_logits, orient_logits
 
 def visualize_grid(grid: torch.Tensor):
