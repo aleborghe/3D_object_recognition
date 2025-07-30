@@ -6,9 +6,9 @@ from tqdm import tqdm
 
 
 
-csv_path  = "../ModelNet10/metadata_modelnet10.csv"  # or wherever you put it
-data_root = "../ModelNet10"        # root folder for the folders in object_path
-voxel_dir = "../ModelNet10/voxel_grids"
+csv_path  = "../ModelNet10/metadata_modelnet10.csv"
+data_root = "../ModelNet10"
+
 transformation = ToVoxelGrid(grid_size=28)
 train_ds = ModelNetDataset(csv_path, data_root, split="train")
 test_ds  = ModelNetDataset(csv_path, data_root,
@@ -31,5 +31,3 @@ for i in tqdm(range(len(train_ds)),desc=f"Train dataset", leave=False):
 for i in tqdm(range(len(test_ds)),desc=f"Test dataset", leave=False):
     sample = transformation(test_ds[i])
     torch.save(sample["voxel"], sample["mesh_path"][:14] + "voxel_" + sample["mesh_path"][14:-3] + "torch")
-#for i in range(len(test_ds)):
-#    sample = train_ds

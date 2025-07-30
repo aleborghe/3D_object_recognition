@@ -1,6 +1,0 @@
-num_epochs=1501
-learning_rate=0.001
-batch_size=200
-optimizer=<class 'torch.optim.adam.Adam'>
-grid_size=28
-num_orientations=4

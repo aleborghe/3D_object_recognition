@@ -1,9 +1,7 @@
 from utils import VoxelDataset
-from cl_orion import Encoder
-from cl_orion import HeadClassification
+from cl_utils import Encoder, HeadClassification
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch.nn.functional as F
 import torch
@@ -13,7 +11,7 @@ from tqdm import tqdm
 import numpy as np
 
 
-def finish_training(train_loss_log, test_loss_log, best_model_state, net, params_dir, best_accuracy):
+def finish_training(train_loss_log, test_loss_log, best_model_state, net, params_dir, best_loss):
     # Plot losses
     plt.figure(figsize=(12, 8))
     plt.semilogy(train_loss_log, label='Train loss')
@@ -33,17 +31,16 @@ def finish_training(train_loss_log, test_loss_log, best_model_state, net, params
     else:
         torch.save(net.state_dict(), params_dir + 'net_parameters.torch')
     print("Parameters saved at " + params_dir + 'net_parameters.torch')
-    print(f"Best validation accuracy: {best_accuracy}")
+    print(f"Best validation loss: {best_loss}")
 
 
 if __name__ =="__main__":
-    csv_path  = "../ModelNet10/new_metadata_modelnet10.csv"  # or wherever you put it
-    data_root = "../ModelNet10"        # root folder for the folders in object_path
-    encoder_path = "84_contrastive/encoder_parameters.torch"
+    csv_path  = "../ModelNet10/new_metadata_modelnet10.csv"
+    data_root = "../ModelNet10"       
+    encoder_path = "CL_RESULTS/encoder_parameters.torch" #Path where the encoder parameters are saved
     # Parameters
     RNG_seed = 1
-    ##############Change these
-    params_dir = 'result/'
+    params_dir = 'result/'	#Folder where the parameters and loss graph will be saved
     # Enable cuDNN to select the fastest convolution algorithms for your hardware
     torch.backends.cudnn.benchmark = True
 
@@ -73,14 +70,14 @@ if __name__ =="__main__":
     num_classes = len(train_ds.class_to_idx)
     print(f"Found {num_classes} classes: {train_ds.class_to_idx}")
     train_loader = DataLoader(train_ds, batch_size=train_batch_size, shuffle=True,
-                        num_workers=os.cpu_count(),        # spawn 3 worker processes
-                        pin_memory=True,      # helps when transferring to GPU
-                        prefetch_factor=4)     # how many batches each worker preloads)
-    test_loader = DataLoader(test_ds, batch_size=len(test_ds), shuffle=False, num_workers=0)     # how many batches each worker preloads)
-    # Define the loss function
+                        num_workers=os.cpu_count(),        
+                        pin_memory=True,      
+                        prefetch_factor=4)     
+    test_loader = DataLoader(test_ds, batch_size=len(test_ds), shuffle=False, num_workers=0)     
+    # Define the models
     encoder = Encoder()
     encoder.to(device)
-    encoder.eval()
+    encoder.eval()	#We freeze its weights!
     encoder.load_state_dict(torch.load(encoder_path))
     transform_head = HeadClassification(input_dim=128)
     transform_head.to(device)
@@ -102,8 +99,7 @@ if __name__ =="__main__":
     test_loss_log = []
     start_time = time()
 
-    patience = 500  # Number of epochs to wait for improvement
-    min_val_loss = 20  # Min loss after which early stopping occurs
+    patience = 150  # Number of epochs to wait for improvement
     best_loss = 100
     epochs_no_improve = 0
     best_model_state = None
@@ -142,10 +138,10 @@ if __name__ =="__main__":
 
             ### VALIDATION
             test_loss = []
-            test_loss_unscaled = []  # List to store unscaled test losses
+            test_loss_unscaled = []  # List to store test losses
             accuracy = []
-            transform_head.eval()  # Evaluation mode (e.g. disable dropout, batchnorm,...)
-            with torch.no_grad():  # Disable gradient tracking
+            transform_head.eval()
+            with torch.no_grad():
                 for sample_batched in test_loader:
                     # Move data to device
                     voxels = sample_batched['voxel'].unsqueeze(1).to(device)     # shape (B,1,28,28,28)

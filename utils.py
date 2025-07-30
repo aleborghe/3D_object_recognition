@@ -87,6 +87,7 @@ class VoxelDataset(Dataset):
             split:      "train" or "test"
             class_to_idx: Optional dict mapping class‐names to ints. 
                         If None, built from this split’s classes (sorted).
+            num_classes: Number of classes utilized as labels
             transform:  Optional callable(sample) → sample
         """
         self.df = pd.read_csv(csv_path)
@@ -132,10 +133,11 @@ class VoxelDataset(Dataset):
 
 class RandomRotate:
     """
-    Rotate a binary occupancy grid by angle_degrees around the given axis.
+    Rotate a binary occupancy grid by angle_degrees around a random axis between x, y and z.
     voxels: (D,H,W) tensor of 0/1 (uint8 or float)
-    axis: 'x', 'y', or 'z'
-    Returns: rotated (D,H,W) tensor of 0/1
+    num_oreintation: How many different angle orientations can rotate it
+    Augmentation: if true it rotates the 2 different voxels in voxel1 and voxel2, otherwise overwrites the one saved in voxel
+    Returns: sample dictionary
     """
     def __init__(self, num_orientations: int = 4, num_classes: int = 10, augmentation = False):
         self.K = num_orientations
@@ -246,7 +248,8 @@ class RandomCropResize3D:
     """
     Given a sample dict with key 'voxel' of shape (D,H,W),
     extract a random (N x N x N) crop and resize it back to (D,H,W).
-    Replaces sample['voxel'] with the cropped+resized grid.
+    Replaces sample['voxel'] with the cropped+resized grid if augmentation is false, 
+    otherwise saves two copies of the same cropped voxel in voxel1 and voxel2.
     """
     def __init__(self, crop_size: int, output_size: int = 28, augmentation = False, max_tries=5):
         self.crop_size   = crop_size
@@ -399,7 +402,7 @@ class ORIONNet(nn.Module):
     Orientation‑boosted Voxel Net (ORION) for 3D object recognition.
     
     Architecture (VoxNet backbone):
-      - Conv3d(1→32, kernel=5, stride=2) + LeakyReLU(0.1)
+      - Conv3d(1→32, kernel=3, stride=2) + LeakyReLU(0.1)
       - Conv3d(32→32, kernel=3, stride=1) + LeakyReLU(0.1)
       - MaxPool3d(kernel=2)
       - Flatten

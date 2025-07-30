@@ -1,14 +1,11 @@
 from utils import VoxelDataset
-from cl_orion import Encoder
-from cl_orion import HeadContrastive
-from cl_orion import NTXentLoss
+from cl_utils import Encoder, HeadContrastive, NTXentLoss
 from utils import RandomRotate
 from utils import RandomCropResize3D
 from torchvision.transforms import Compose
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-import torch.nn.functional as F
 import torch
 import os
 import sys
@@ -38,16 +35,15 @@ def finish_training(train_loss_log, test_loss_log, best_enc_state, best_head_sta
     torch.save(best_head_state, params_dir + 'head_parameters.torch')
     
     print("Parameters saved at " + params_dir + 'net_parameters.torch')
-    print(f"Best validation accuracy: {best_loss}")
+    print(f"Best validation loss: {best_loss}")
     sys.exit()
 
 
 if __name__ =="__main__":
-    csv_path  = "../ModelNet10/new_metadata_modelnet10.csv"  # or wherever you put it
-    data_root = "../ModelNet10"        # root folder for the folders in object_path
+    csv_path  = "../ModelNet10/new_metadata_modelnet10.csv" #csv with the metadata
+    data_root = "../ModelNet10" 
     # Parameters
     RNG_seed = 1
-    ##############Change these
     params_dir = 'contrastive/'
     # Enable cuDNN to select the fastest convolution algorithms for your hardware
     torch.backends.cudnn.benchmark = True
@@ -68,7 +64,6 @@ if __name__ =="__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print(torch.cuda.get_device_name() if torch.cuda.is_available() else "No CUDA device available")
     num_print = 10
-    # build a single transform pipeline:
     crop = RandomCropResize3D(21, augmentation=True)
     rotation = RandomRotate(num_orientations=params['num_orientations'], augmentation=True)
     transform = Compose([crop, rotation])
@@ -84,11 +79,11 @@ if __name__ =="__main__":
     num_classes = len(train_ds.class_to_idx)
     print(f"Found {num_classes} classes: {train_ds.class_to_idx}")
     train_loader = DataLoader(train_ds, batch_size=train_batch_size, shuffle=True,
-                        num_workers=os.cpu_count(),        # spawn 3 worker processes
-                        pin_memory=True,      # helps when transferring to GPU
-                        prefetch_factor=4)     # how many batches each worker preloads)
-    test_loader = DataLoader(test_ds, batch_size=train_batch_size, shuffle=False, num_workers=0)     # how many batches each worker preloads)
-    # Define the loss function
+                        num_workers=os.cpu_count(),       
+                        pin_memory=True,     
+                        prefetch_factor=4)     
+    test_loader = DataLoader(test_ds, batch_size=train_batch_size, shuffle=False, num_workers=0)    
+    # Define the models
     encoder = Encoder()
     encoder.to(device)
     transform_head = HeadContrastive(input_dim=128)
@@ -113,8 +108,7 @@ if __name__ =="__main__":
     test_loss_log = []
     start_time = time()
 
-    patience = 1000  # Number of epochs to wait for improvement
-    min_val_loss = 20  # Min loss after which early stopping occurs
+    patience = 500  # Number of epochs to wait for improvement
     best_loss = float('inf')
     epochs_no_improve = 0
     best_enc_state = None
@@ -159,12 +153,12 @@ if __name__ =="__main__":
 
             ### VALIDATION
             test_loss = []
-            test_loss_unscaled = []  # List to store unscaled test losses
+            test_loss_unscaled = [] 
             accuracy = []
-            encoder.eval()  # Evaluation mode (e.g. disable dropout, batchnorm,...)
+            encoder.eval()  
             transform_head.eval()
             scheduler.step()
-            with torch.no_grad():  # Disable gradient tracking
+            with torch.no_grad():  
                 for sample_batched in test_loader:
                     # Move data to device
                     
@@ -177,11 +171,11 @@ if __name__ =="__main__":
 
                     loss = loss_fn(query_representations, pos_representations)
                     ###########################################
-                    # Save val loss for this batch (scaled)
+                    # Save val loss for this batch
                     loss_batch = loss.detach().cpu().numpy()
                     test_loss.append(loss_batch)
 
-                # Save average validation loss (scaled)
+                # Save average validation loss
                 test_loss = np.mean(test_loss)
                 test_loss_log.append(test_loss)
 
